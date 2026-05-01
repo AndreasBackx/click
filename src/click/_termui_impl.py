@@ -21,6 +21,7 @@ from pathlib import Path
 from types import TracebackType
 
 from ._compat import _default_text_stdout
+from ._compat import _find_binary_writer
 from ._compat import CYGWIN
 from ._compat import get_best_encoding
 from ._compat import isatty
@@ -377,6 +378,12 @@ class MaybeStripAnsi(io.TextIOWrapper):
         return super().write(text)
 
 
+class _ColoredStringIO(StringIO):
+    def __init__(self, *, color: bool | None) -> None:
+        super().__init__()
+        self.color = color
+
+
 def _pager_contextmanager(
     color: bool | None = None,
 ) -> t.ContextManager[tuple[t.BinaryIO | t.TextIO, str, bool]]:
@@ -386,7 +393,7 @@ def _pager_contextmanager(
     # There are no standard streams attached to write to. For example,
     # pythonw on Windows.
     if stdout is None:
-        stdout = StringIO()
+        stdout = _ColoredStringIO(color=color)
 
     if not isatty(sys.stdin) or not isatty(stdout):
         return _nullpager(stdout, color)
@@ -418,15 +425,13 @@ def get_pager_file(color: bool | None = None) -> t.Generator[t.TextIO, None, Non
     """
     with _pager_contextmanager(color=color) as (stream, encoding, color):
         if not isinstance(stream, MaybeStripAnsi):
-            if hasattr(stream, "buffer"):
-                # Real TextIO with buffer - unwrap and wrap in MaybeStripAnsi
-                stream = MaybeStripAnsi(stream.buffer, color=color, encoding=encoding)
-            elif not getattr(stream, "encoding", None):
-                # BinaryIO - wrap directly in MaybeStripAnsi
-                stream = MaybeStripAnsi(stream, color=color, encoding=encoding)
-            else:
-                # StringIO - add .color attribute only, no ANSI stripping
-                stream.color = color  # type: ignore[attr-defined]
+            binary_stream = _find_binary_writer(stream)
+
+            if binary_stream is not None:
+                # Wrap binary-compatible streams so ANSI stripping happens at write time
+                stream = MaybeStripAnsi(binary_stream, color=color, encoding=encoding)
+            elif isinstance(stream, StringIO):
+                stream = _ColoredStringIO(color=color)
         try:
             yield t.cast(t.TextIO, stream)
         finally:

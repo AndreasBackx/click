@@ -57,6 +57,10 @@ class EchoingStdin:
         return repr(self._input)
 
 
+def _is_file_like(value: t.Any) -> t.TypeGuard[t.IO[t.Any]]:
+    return hasattr(value, "read")
+
+
 @contextlib.contextmanager
 def _pause_echo(stream: EchoingStdin | None) -> cabc.Iterator[None]:
     if stream is None:
@@ -164,8 +168,8 @@ def make_input_stream(
     input: str | bytes | t.IO[t.Any] | None, charset: str
 ) -> t.BinaryIO:
     # Is already an input stream.
-    if hasattr(input, "read"):
-        rv = _find_binary_reader(t.cast("t.IO[t.Any]", input))
+    if _is_file_like(input):
+        rv = _find_binary_reader(input)
 
         if rv is not None:
             return rv
@@ -173,11 +177,15 @@ def make_input_stream(
         raise TypeError("Could not find binary reader for input stream.")
 
     if input is None:
-        input = b""
+        bytes_input = b""
     elif isinstance(input, str):
-        input = input.encode(charset)
+        bytes_input = input.encode(charset)
+    elif isinstance(input, bytes):
+        bytes_input = input
+    else:
+        raise TypeError("Could not find binary reader for input stream.")
 
-    return io.BytesIO(input)
+    return io.BytesIO(bytes_input)
 
 
 class Result:
